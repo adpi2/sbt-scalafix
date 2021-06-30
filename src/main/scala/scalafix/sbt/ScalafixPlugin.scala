@@ -183,15 +183,20 @@ object ScalafixPlugin extends AutoPlugin {
   override lazy val projectConfigurations: Seq[Configuration] =
     Seq(ScalafixConfig)
 
-  override lazy val projectSettings: Seq[Def.Setting[_]] =
-    Seq(Compile, Test).flatMap(c => inConfig(c)(scalafixConfigSettings(c))) ++
-      inConfig(ScalafixConfig)(
-        Defaults.configSettings :+ (sourcesInBase := false)
-      ) ++
-      Seq(
-        ivyConfigurations += ScalafixConfig,
-        scalafixAll := scalafixAllInputTask.evaluated
+  override lazy val projectSettings: Seq[Def.Setting[_]] = Def.settings(
+    Seq(Compile, Test).flatMap(c => inConfig(c)(scalafixConfigSettings(c))),
+    inConfig(ScalafixConfig)(
+      Def.settings(
+        Defaults.configSettings,
+        sourcesInBase := false,
+        tryLoadSbtSetting[Boolean]("bspEnabled")
+          .map(bspEnabled => bspEnabled := false)
+          .toSeq
       )
+    ),
+    ivyConfigurations += ScalafixConfig,
+    scalafixAll := scalafixAllInputTask.evaluated
+  )
 
   override lazy val globalSettings: Seq[Def.Setting[_]] = Seq(
     scalafixConfig := None, // let scalafix-cli try to infer $CWD/.scalafix.conf
@@ -728,4 +733,22 @@ object ScalafixPlugin extends AutoPlugin {
 
   private val scalacOptionsToRelax =
     List("-Xfatal-warnings", "-Werror", "-Wconf.*").map(_.r.pattern)
+
+  /**
+    * Try load a setting key from sbt.Keys using reflection.
+    * This is usefull to deal with the binary compatibility of different versions of sbt.
+    * 
+    * For instance the bspEnabled key has been introduced in sbt 1.4.
+    * Calling tryLoadSbtSetting("bspEnabled") return None on sbt 1.3 and
+    * Some(Keys.bspEnabled) on sbt 1.4 and greater.
+    */
+  private def tryLoadSbtSetting[T](key: String): Option[SettingKey[T]] = {
+    try {
+      val getter = Keys.getClass().getMethod(key)
+      if (getter == null) println("key is null")
+      Some(getter.invoke(Keys).asInstanceOf[SettingKey[T]])
+    } catch {
+      case _: NoSuchMethodException => None
+    }
+  }
 }
